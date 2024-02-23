@@ -26,13 +26,13 @@ HHPrescriberNPI         <- read.csv("./data/input/HHPrescriberNPI.csv")
 
 # Introduction
 
-FOllowing previous studies focused on the NCQA requirements for performance measurement of Antidepressant Medication Management, it was hypothesized that individuals have more successful adherence to pharmocological treatment of depression when they recieve thier services from thier assigned health home provider. 
+Following previous studies focused on the NCQA requirements for performance measurement of Antidepressant Medication Management, it was hypothesized that individuals have more successful adherence to pharmacological treatment of depression when they receive their services from their assigned health home provider. 
 
 # Purpose
 
-This study will measure the extent to which a person follows through on treatment with an antidepressant medication for at least a 6 month duration. The results of this study will give the Alliance actioanable data that will enable it to target aspects of treatment for depression, and improve adherence to AM treatment. 
+This study will measure the extent to which a person follows through on treatment with an antidepressant medication for at least a 6 month duration. The results of this study will give the Alliance actionable data that will enable it to target aspects of treatment for depression, and improve adherence to AM treatment. 
 
-Up to this point, Alliance ACO providers have performed well on the AMM memasure, but it is not clear if that is due to use of best practices, or by chance. The results of this study will enable to Alliance to support the former. 
+Up to this point, Alliance ACO providers have performed well on the AMM measure, but it is not clear if that is due to use of best practices, or by chance. The results of this study will enable to Alliance to support the former. 
 
 # Method
 
@@ -42,6 +42,7 @@ Goes a little sumthin' like this...
 2. Filter HCA claims down to only AMM NDC/GPI
 3. Use AMM NMH code to identify new starts
 4. Determine days supply for new start.
+5. Was the new start prescribed with a refill
 5. Look for next fill within range of new start days supply
 6. allow for 30 day gap
 7. continue until 6 months of continuity
@@ -88,18 +89,139 @@ ClaimsPBM_AMM <-
       dtfilled,
       genericnme,
       dayssupply,
-      refill,
-      GpiNumber,
+      # refill,
+      # GpiNumber,
       GPIClassification,
       er02key
     )
 
+# Filter for antidepressant medications
 ClaimsPBM_AMM <-
   ClaimsPBM_AMM |> 
   filter(GPIClassification == "(58) Antidepressants")
 
-````
+# Format as date
+ClaimsPBM_AMM$dtfilled <- as.Date(ClaimsPBM_AMM$dtfilled)
 
+# Split out the basic medication name
+# Make duplicate column
+ClaimsPBM_AMM$GenericnmeBase <- ClaimsPBM_AMM$genericnme
 
+# Split the duplicated column at the first space from the left
+ClaimsPBM_AMM$GenericnmeBase <- sapply(strsplit(as.character(ClaimsPBM_AMM$GenericnmeBase), " "), function(x) x[1])
 
+# Filter any days supply that are 0
+ClaimsPBM_AMM <-
+  ClaimsPBM_AMM |> 
+  filter(dayssupply != 0)
 
+```
+
+# Determing New Start
+
+```{r}
+
+# Set the reference date
+reference_date <- as.Date("2023-01-01")
+
+# Calculate the date threshold (105 days after 2023-01-01)
+date_threshold <- reference_date + 105
+
+# Filter out cases where dtfilled is less than 105 days after 2023-01-01
+filtered_data <- ClaimsPBM_AMM[ClaimsPBM_AMM$dtfilled >= date_threshold, ]
+
+# Create a new column called NewStart and initialize with 0
+filtered_data$NewStart <- 0
+
+# Loop through each row in filtered_data
+for (i in 1:nrow(filtered_data)) {
+  # Extract AHCCCSID and dtfilled from the current row in filtered_data
+  current_AHCCCSID <- filtered_data$AHCCCSID[i]
+  current_dtfilled <- filtered_data$dtfilled[i]
+  
+  # Check if there is no dtfilled in ClaimsPBM_AMM less than 105 days before current_dtfilled
+  if (!any(ClaimsPBM_AMM$dtfilled < (current_dtfilled - 105) & ClaimsPBM_AMM$AHCCCSID == current_AHCCCSID)) {
+    # If no such dtfilled is found, set NewStart to 1
+    filtered_data$NewStart[i] <- 1
+  }
+}
+
+# Filter the data set to only include new starts
+ClaimsPBM_AMM_NewStarts <-
+  filtered_data |> 
+    filter(NewStart == 1) |> 
+    select(-c(NewStart))
+
+# Remove duplicates based on AHCCCSID, npiprescr, and dtfilled
+ClaimsPBM_AMM_NewStarts <- 
+  ClaimsPBM_AMM_NewStarts %>%
+  distinct(AHCCCSID, npiprescr, dtfilled, .keep_all = TRUE)
+```
+
+The result is a table of prescriptions for AMs that are a New Start for 2023. This means that there was no other script prior to 105 days after the new year, 1/1/2023, and there was no prescription that was less than 105 before the New Start date. 
+
+# Determine next fill
+
+```{r}
+
+# Set the reference date
+reference_date <- as.Date("2023-01-01")
+
+# Calculate the date threshold (105 days after 2023-01-01)
+date_threshold <- reference_date + 105
+
+# select variables from original PBM AMM data where the dtfilled is greater than or equal to the threshold date
+filtered_data <-
+  ClaimsPBM_AMM |>
+  filter(dtfilled >= date_threshold) |> 
+  select(
+    AHCCCSID,
+    npiprescr,
+    preslstnme,
+    dtfilled,
+    GenericnmeBase,
+    dayssupply,
+    er02key
+  )
+
+ClaimsPBM_AMM_NewStarts$er02key <- format(ClaimsPBM_AMM_NewStarts$er02key, scientific = FALSE)
+filtered_data$er02key <- format(filtered_data$er02key, scientific = FALSE)
+
+# Left join ClaimsPBM_AMM_NewStarts with filtered_data
+result_data <- 
+  merge(x = ClaimsPBM_AMM_NewStarts, 
+        y = filtered_data, 
+        by = "AHCCCSID",
+        all.x = TRUE) |> # Merge New Starts table with original AM table by AHCCCSID
+        filter(dtfilled.y > dtfilled.x) |> # Filter for only cases where the subsequent fill date is later than the orignal fill date
+        arrange(dtfilled.x, dtfilled.y) |> # sort by date order for ease of use
+        mutate(DaysDiff_refill1 = dtfilled.y - dtfilled.x) |> # create a column to calculate days difference between fills
+        mutate(DaysSupply_Gap1 = dayssupply.x - DaysDiff_refill1) |> # calculate any gap between days supply and fill
+        mutate(SamePrescriber = npiprescr.x == npiprescr.y) |> # determine if there was a prescriber change
+        mutate(SameMed = GenericnmeBase.x == GenericnmeBase.y) |> # determine if there was a med change
+        mutate(MedChange = if_else(SameMed == "FALSE", paste(GenericnmeBase.x, "to", GenericnmeBase.y), "NoChange")) |>  # if there was a med change, indicate what that was
+        select(
+          AHCCCSID,
+          dtfilled.x,
+          GenericnmeBase.x,
+          dayssupply.x,
+          preslstnme.x,
+          npiprescr.x,
+          dtfilled.y,
+          GenericnmeBase.y,
+          dayssupply.y,
+          preslstnme.y,
+          DaysDiff_refill1,
+          DaysSupply_Gap1,
+          SamePrescriber,
+          SameMed,
+          MedChange
+          )
+
+```
+
+```{r}
+
+write.csv(result_data, "./data/output/AMPrescribingPatterns_Test_2023-02-23.csv")
+
+```
