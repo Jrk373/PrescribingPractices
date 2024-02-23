@@ -1,0 +1,105 @@
+---
+title: "Prescribing Practices"
+author: "John Ryan Kivela, MA"
+format: html
+editor: visual
+---
+
+# Setup
+
+```{r}
+library(tidyverse)
+
+```
+
+#Pre-Load Data
+
+```{r}
+
+ClaimsPBM_AllHCA        <- read.csv("./data/input/ClaimsPBM_AllHCA.csv")
+
+AllianceEnrolledMembers <- read.csv("./data/input/AllianceEnrolledMembers.csv")
+
+HHPrescriberNPI         <- read.csv("./data/input/HHPrescriberNPI.csv")
+
+```
+
+# Introduction
+
+FOllowing previous studies focused on the NCQA requirements for performance measurement of Antidepressant Medication Management, it was hypothesized that individuals have more successful adherence to pharmocological treatment of depression when they recieve thier services from thier assigned health home provider. 
+
+# Purpose
+
+This study will measure the extent to which a person follows through on treatment with an antidepressant medication for at least a 6 month duration. The results of this study will give the Alliance actioanable data that will enable it to target aspects of treatment for depression, and improve adherence to AM treatment. 
+
+Up to this point, Alliance ACO providers have performed well on the AMM memasure, but it is not clear if that is due to use of best practices, or by chance. The results of this study will enable to Alliance to support the former. 
+
+# Method
+
+Goes a little sumthin' like this...
+
+1. Get all HCA claims
+2. Filter HCA claims down to only AMM NDC/GPI
+3. Use AMM NMH code to identify new starts
+4. Determine days supply for new start.
+5. Look for next fill within range of new start days supply
+6. allow for 30 day gap
+7. continue until 6 months of continuity
+
+Analysis:
+1. Were follow up prescribers the same as new start prescribers
+2. Which prescribers were in network
+3. What was the prevalence of prescrinber credentials
+4. Were certain meds more likely to be prescribed
+5. Were certain meds more lilkley to be prescriber by presriber type
+6. Was adherence different for in network 
+7. Was adherence different byb medication
+
+# Data Undestanding
+
+We are working with three main data sources:
+
+  1.    Alliance Enrolled Member Roster
+      -   This data is well established. It is querried from the HC data warehouse and used in a variety of Alliance ACO projects. It includes member identifying information, as well as several demographic and treatment history indicators.
+  2.    Pharmacy Benefit Manager Claims
+      -   This is raw data queried from HC data warehouse, it is voluminous, but includes key variables that are needed for this study, notably "Days Supply".
+  3.    Health Home Prescriber NPI
+      -   This is a set of data gathered by the Alliance ACO on its own prescribers' affiliation with contracted Alliance ACO Providers. These providers are considered "In Network".
+      
+      
+      
+# Procedure
+
+Ok, here we go...
+
+## Import PBM Claims data, clean, and filter for antidepressant medication prescriptions
+
+```{r}
+
+# Select variables
+ClaimsPBM_AMM <-
+  ClaimsPBM_AllHCA |> 
+    select(
+      AHCCCSID,
+      preslstnme,
+      presfstnme,
+      presspccde,
+      npiprescr,
+      dtfilled,
+      genericnme,
+      dayssupply,
+      refill,
+      GpiNumber,
+      GPIClassification,
+      er02key
+    )
+
+ClaimsPBM_AMM <-
+  ClaimsPBM_AMM |> 
+  filter(GPIClassification == "(58) Antidepressants")
+
+````
+
+
+
+
